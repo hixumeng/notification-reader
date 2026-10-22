@@ -1,0 +1,11 @@
+.toolchain/
+build/
+.gradle/
+local.properties
+.signing/
+*.jks
+dist/*.apk
+dist/*.zip
+dist/*.idsig
+__pycache__/
+.DS_Store
