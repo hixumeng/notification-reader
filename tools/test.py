@@ -9,7 +9,7 @@ out = root / 'build/core-tests'
 out.mkdir(parents=True, exist_ok=True)
 core = root / 'app/src/main/java/dev/qianwen/notifyreader'
 subprocess.run([str(jdk/'javac'), '--release', '8', '-encoding', 'UTF-8', '-d', str(out),
-                str(core/'ReadingRules.java'), str(core/'WavPadding.java'), str(root/'tests/CoreTests.java')], check=True)
+                str(core/'ReadingRules.java'), str(core/'WavPadding.java'), str(core/'CallSilence.java'), str(root/'tests/CoreTests.java')], check=True)
 subprocess.run([str(jdk/'java'), '-cp', str(out), 'CoreTests'], check=True)
 tree = ET.parse(root / 'app/src/main/AndroidManifest.xml')
 android = '{http://schemas.android.com/apk/res/android}'
@@ -17,8 +17,10 @@ permissions = {p.get(android+'name') for p in tree.findall('uses-permission')}
 assert 'android.permission.INTERNET' not in permissions
 assert 'android.permission.READ_EXTERNAL_STORAGE' not in permissions
 assert 'android.permission.RECORD_AUDIO' not in permissions
+assert 'android.permission.READ_PHONE_STATE' not in permissions
+assert 'android.permission.READ_CALL_LOG' not in permissions
 assert tree.find('application').get(android+'allowBackup') == 'false'
 for service in tree.findall('./application/service'):
     if service.get(android+'exported') == 'true':
         assert service.get(android+'permission') == 'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE'
-print('Manifest checks passed: no network/microphone/storage permission, no backup, listener OS-protected.')
+print('Manifest checks passed: no network/microphone/storage/phone-state/call-log permission, no backup, listener OS-protected.')

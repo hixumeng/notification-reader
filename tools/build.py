@@ -53,7 +53,8 @@ def main():
         run(JDK / 'bin/keytool', '-genkeypair', '-keystore', key, '-alias', 'personal-test',
             '-storepass', 'android', '-keypass', 'android', '-keyalg', 'RSA', '-keysize', '2048',
             '-validity', '10000', '-dname', 'CN=Notification Reader Personal Test', '-noprompt')
-    apk = DIST / 'notification-reader-v0.1.0.apk'
+    version = manifest.getroot().get('{http://schemas.android.com/apk/res/android}versionName')
+    apk = DIST / f'notification-reader-v{version}.apk'
     run(JDK / 'bin/java', '-jar', TOOLS / 'lib/apksigner.jar', 'sign', '--ks', key,
         '--ks-key-alias', 'personal-test', '--ks-pass', 'pass:android', '--key-pass', 'pass:android',
         '--out', apk, BUILD / 'aligned.apk')

@@ -1,2 +1,4 @@
-121402a613bfdd7a112ceafe028a284bdb734d5029d1bf15378b23cb558ac86c  notification-reader-v0.1.0.apk
 634f0e99168d5fdbb303041bc6d3f71f31c1352235eac3d9512906a9d519800d  notification-reader-source-v0.1.0.zip
+41640520387404bebba4bcd7dd05b295f54cb49ad068b264e92de8bf8c2bc5b6  notification-reader-source-v0.1.1.zip
+121402a613bfdd7a112ceafe028a284bdb734d5029d1bf15378b23cb558ac86c  notification-reader-v0.1.0.apk
+f89fefd6ad26d3da141fb00f18607483b1cb89c5a34df4151d71f132ff8a356b  notification-reader-v0.1.1.apk

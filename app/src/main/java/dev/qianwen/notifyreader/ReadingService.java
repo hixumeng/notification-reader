@@ -39,10 +39,12 @@ public final class ReadingService extends Service {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ArrayDeque<Part> queue = new ArrayDeque<>();
     private final ReadingRules rules = new ReadingRules();
+    private final CallSilence callSilence = new CallSilence();
     private Prefs prefs;
     private AudioManager audio;
     private TextToSpeech tts;
     private AudioFocusRequest focus;
+    private Runnable removeModeListener;
     private MediaPlayer player;
     private boolean ready, initialized, routeVerified;
     private String currentId = "";
@@ -59,6 +61,7 @@ public final class ReadingService extends Service {
         @Override public void run() {
             MediaPlayer active = player;
             if (active == null) return;
+            if (!mayReadNow()) return;
             try {
                 AudioDeviceInfo routed = active.getRoutedDevice();
                 if (Routes.selected(ReadingService.this) == null) { fail("所选设备已断开，已停止。"); return; }
@@ -78,6 +81,41 @@ public final class ReadingService extends Service {
             } catch (IllegalStateException e) { fail("音频播放状态异常，请重新测试。"); }
         }
     };
+    private final Runnable callCheck = new Runnable() {
+        @Override public void run() {
+            if (instance != ReadingService.this) return;
+            refreshCallState();
+            handler.postDelayed(this, 500);
+        }
+    };
+
+    private void refreshCallState() {
+        boolean blocked;
+        try {
+            // Includes ringing, cellular/VoIP calls, screening and redirected communication.
+            // Unknown non-normal modes also take priority over notification speech.
+            blocked = audio.getMode() != AudioManager.MODE_NORMAL;
+        } catch (RuntimeException unavailable) { blocked = true; }
+        boolean changed = callSilence.update(blocked, System.currentTimeMillis(), SystemClock.elapsedRealtime());
+        if (!callSilence.canSpeak(SystemClock.elapsedRealtime()) && (!currentId.isEmpty() || !queue.isEmpty())) {
+            fail(callStatus());
+        } else if (changed && prefs.enabled()) {
+            prefs.status(callStatus());
+        }
+    }
+
+    private String callStatus() {
+        return callSilence.isCallActive() ? "通话或来电期间暂停朗读，通知已跳过，不会补读。"
+                : "通话已结束，等待音频恢复；稍后只朗读新通知。";
+    }
+
+    private boolean mayReadNow() {
+        refreshCallState();
+        if (callSilence.canSpeak(SystemClock.elapsedRealtime())) return true;
+        prefs.status(callStatus());
+        if (!prefs.enabled()) stopSelf();
+        return false;
+    }
 
     static void offer(String source, String key, String app, String title, String body, long date) {
         ReadingService service = instance;
@@ -103,6 +141,10 @@ public final class ReadingService extends Service {
                 new NotificationChannel(CHANNEL, "通知朗读运行状态", NotificationManager.IMPORTANCE_LOW));
         foreground(false);
         audio.registerAudioDeviceCallback(devices, handler);
+        if (Build.VERSION.SDK_INT >= 31) {
+            removeModeListener = Api31ModeWatcher.install(audio, handler, this::refreshCallState);
+        }
+        handler.post(callCheck);
         cleanupCache();
         tts = new TextToSpeech(getApplicationContext(), status -> handler.post(() -> initializeTts(status)));
         tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
@@ -154,12 +196,17 @@ public final class ReadingService extends Service {
     private void receive(String source, String key, String app, String title, String body, long date) {
         if (!prefs.enabled() || !prefs.apps().contains(source) || body.isEmpty()) return;
         if (date > 0 && date < startedWall - 2000) return;
-        if (Routes.selected(this) == null) { prefs.status("所选眼镜未连接，本次通知已跳过。"); return; }
+        boolean allowed = mayReadNow();
+        if (callSilence.isOldMessage(date)) return;
+        // Remember skipped call-time updates even when Bluetooth media is temporarily unavailable.
         if (!rules.accept(source, key, title + "\n" + body, date, SystemClock.elapsedRealtime())) return;
+        if (!allowed) return;
+        if (Routes.selected(this) == null) { prefs.status("所选眼镜未连接，本次通知已跳过。"); return; }
         enqueue(ReadingRules.spoken(app, title, body), false);
     }
 
     private void enqueue(String text, boolean test) {
+        if (!mayReadNow()) return;
         if (Routes.selected(this) == null) {
             prefs.status("请连接所选蓝牙设备，并在蓝牙设置中开启媒体音频。");
             if (!prefs.enabled()) stopSelf();
@@ -175,6 +222,7 @@ public final class ReadingService extends Service {
     }
 
     private void next() {
+        if (!mayReadNow()) return;
         if (!ready || !currentId.isEmpty()) return;
         while (!queue.isEmpty() && SystemClock.elapsedRealtime() - queue.peek().time > 300_000L) queue.remove();
         if (queue.isEmpty()) {
@@ -197,19 +245,23 @@ public final class ReadingService extends Service {
     private void synthesized(String id) {
         if (!id.equals(currentId) || instance != this) { new File(getCacheDir(), id + ".wav").delete(); return; }
         handler.removeCallbacks(synthesisTimeout);
+        if (!mayReadNow()) return;
         AudioDeviceInfo target = Routes.selected(this);
         if (target == null) { fail("设备已断开，本次朗读取消。"); return; }
         try {
             WavPadding.add(currentFile, 350);
             foreground(true);
+            final String focusId = currentId;
             focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
                     .setAudioAttributes(attributes).setWillPauseWhenDucked(true)
+                    .setAcceptsDelayedFocusGain(false)
                     .setOnAudioFocusChangeListener(change -> {
-                        if (change < 0) fail("音频被通话或其他应用占用，本次朗读已停止。");
+                        if (change < 0 && focusId.equals(currentId)) fail("音频被通话或其他应用占用，本次朗读已停止。");
                     }, handler).build();
             if (audio.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                 fail("暂时无法取得音频播放权限，本次朗读已跳过。"); return;
             }
+            if (!mayReadNow()) return;
             player = new MediaPlayer();
             MediaPlayer active = player;
             active.setAudioAttributes(attributes);
@@ -224,6 +276,7 @@ public final class ReadingService extends Service {
             active.setOnCompletionListener(p -> complete(active));
             active.setOnPreparedListener(p -> {
                 if (player != active || Routes.selected(this) == null) { fail("设备状态变化，已停止。"); return; }
+                if (!mayReadNow()) return;
                 routeVerified = false;
                 routeStarted = SystemClock.elapsedRealtime();
                 active.start();
@@ -284,12 +337,25 @@ public final class ReadingService extends Service {
         handler.removeCallbacksAndMessages(null);
         queue.clear();
         if (audio != null) audio.unregisterAudioDeviceCallback(devices);
+        if (removeModeListener != null) removeModeListener.run();
         if (tts != null) { tts.stop(); tts.shutdown(); }
         releaseCurrent();
         cleanupCache();
         super.onDestroy();
     }
     @Override public IBinder onBind(Intent intent) { return null; }
+    /** Keep API 31-only listener types out of the service loaded on Android 9–11. */
+    private static final class Api31ModeWatcher {
+        static Runnable install(AudioManager audio, Handler handler, Runnable changed) {
+            AudioManager.OnModeChangedListener listener = mode -> changed.run();
+            try { audio.addOnModeChangedListener(handler::post, listener); }
+            catch (RuntimeException unavailable) { return () -> { }; } // Polling remains active.
+            return () -> {
+                try { audio.removeOnModeChangedListener(listener); }
+                catch (RuntimeException unavailable) { /* Service teardown must still finish. */ }
+            };
+        }
+    }
     private static final class Part {
         final String text;
         final long time;

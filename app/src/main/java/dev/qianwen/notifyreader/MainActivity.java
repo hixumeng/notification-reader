@@ -94,6 +94,8 @@ public final class MainActivity extends Activity {
         config.addView(button("选择已连接的眼镜", v -> chooseDevice()));
         TextView routeNote = text("先连接眼镜并开启媒体音频。设备断开时跳过通知，连接后不补读。", 12, false);
         routeNote.setTextColor(muted); config.addView(routeNote);
+        TextView callNote = text("来电或通话时暂停朗读，期间通知不补读。挂断后等待音频恢复，再朗读新通知。", 12, false);
+        callNote.setTextColor(muted); config.addView(callNote);
         gap(page, 16);
 
         LinearLayout access = card(page);
@@ -111,7 +113,7 @@ public final class MainActivity extends Activity {
 
         TextView privacy = text("本应用无联网权限，不保存通知历史。语音使用手机的 TTS 引擎，优先选择可用的离线中文声音；引擎自身是否联网取决于它的设置。", 12, false);
         privacy.setTextColor(muted); page.addView(privacy);
-        TextView version = text("v0.1.0 · Android 9 及以上 · 个人测试版", 12, false);
+        TextView version = text("v0.1.1 · Android 9 及以上 · 个人测试版", 12, false);
         version.setPadding(0, dp(12), 0, 0); version.setTextColor(muted); page.addView(version);
     }
 

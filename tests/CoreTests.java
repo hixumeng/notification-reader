@@ -1,5 +1,6 @@
 import dev.qianwen.notifyreader.ReadingRules;
 import dev.qianwen.notifyreader.WavPadding;
+import dev.qianwen.notifyreader.CallSilence;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.List;
@@ -11,6 +12,30 @@ public final class CoreTests {
         if (!condition) throw new AssertionError(message);
     }
     public static void main(String[] args) throws Exception {
+        CallSilence calls = new CallSilence();
+        check(calls.canSpeak(0), "normal startup permits speech");
+        check(!calls.isOldMessage(100), "no historical cutoff before any call");
+        check(calls.update(true, 10_000, 100), "incoming ring enters silence");
+        check(!calls.canSpeak(100), "ringing blocks speech");
+        check(!calls.update(true, 11_000, 1100), "ringing-to-connected remains blocked");
+        check(!calls.canSpeak(100_000), "long calls never time out into speech");
+        check(calls.update(false, 20_000, 10_100), "hangup starts route cooldown");
+        check(!calls.canSpeak(11_599), "speech cannot resume before route cooldown ends");
+        check(calls.canSpeak(11_600), "only fresh speech may resume after cooldown");
+        check(calls.isOldMessage(15_000), "bundled call-time messages cannot replay after hangup");
+        check(calls.isOldMessage(20_000), "hangup boundary is also suppressed");
+        check(!calls.isOldMessage(20_001), "new messages after hangup are eligible");
+        check(!calls.isOldMessage(0), "undated notifications rely on content deduplication");
+        check(!calls.update(false, 80_000, 90_000), "idle checks do not move historical cutoff");
+        check(!calls.isOldMessage(30_000), "idle messages stay eligible");
+        check(calls.update(true, 90_000, 100_000), "second call enters silence again");
+        check(!calls.canSpeak(100_000), "second call cannot inherit first call's permission");
+        calls.update(false, 95_000, 105_000);
+        check(calls.isOldMessage(91_000), "second call extends historical suppression");
+        check(!calls.canSpeak(106_499) && calls.canSpeak(106_500), "second hangup gets a fresh cooldown");
+        ReadingRules skipped = new ReadingRules();
+        check(skipped.accept("chat", "notice", "call-time message", 0, 100), "record skipped generic notification");
+        check(!skipped.accept("chat", "notice", "call-time message", 0, 2000), "generic duplicate cannot replay just after hangup");
         check(ReadingRules.clean(null).equals(""), "null text");
         check(ReadingRules.clean("  新\n消息\u202e  ").equals("新 消息"), "control and bidi cleanup");
         check(ReadingRules.spoken("Muse", "Muse", "任务已完成").equals("Muse。任务已完成"), "no repeated app label");
